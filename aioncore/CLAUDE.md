@@ -1,1 +1,1 @@
-../../AionCore/CLAUDE.md
+@AGENTS.md

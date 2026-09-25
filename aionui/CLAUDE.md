@@ -1,1 +1,1 @@
-../../AionUi/CLAUDE.md
+@AGENTS.md

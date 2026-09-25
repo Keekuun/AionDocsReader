@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 // 注意：VitePress 会把配置打包到临时目录执行，__dirname 不可靠；
-// dev/build 都从 docs-reader 目录运行，用 process.cwd() 作为站点根。
-const SITE_ROOT = process.cwd(); // docs-reader/
-const WORKSPACE = path.resolve(SITE_ROOT, '..'); // github 工作区（让 vite 能读软链真实文件）
+// dev/build 都从 AionDocsReader 目录运行，用 process.cwd() 作为站点根。
+const SITE_ROOT = process.cwd(); // AionDocsReader/
+// 文档是 scripts/sync-docs.mjs 从两个仓库复制来的真实文件，站点自包含，
+// 不再需要 vite fs.allow 放行仓库外路径。
 
 // ---------- 工具函数 ----------
 
@@ -127,13 +128,6 @@ export default defineConfig({
 
   //  crates 下的 assets/tests 不收录（builtin-skills 等 100+ 篇技能文件，噪声大）
   srcExclude: ['aioncore/crates/**/assets/**', 'aioncore/crates/**/tests/**', '**/node_modules/**'],
-
-  vite: {
-    server: {
-      // 软链的真实文件在 docs-reader 之外，必须放行工作区根目录
-      fs: { allow: [WORKSPACE] },
-    },
-  },
 
   themeConfig: {
     nav: [
