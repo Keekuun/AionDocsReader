@@ -4,4 +4,4 @@
 
 <iframe src="/architecture/aionui-architecture.html" style="width:100%;height:78vh;min-height:560px;border:1px solid var(--vp-c-divider);border-radius:8px" title="AionUi + AionCore 项目架构图"></iframe>
 
-[在新标签页中打开大图](/architecture/aionui-architecture.html)
+<a href="/architecture/aionui-architecture.html" target="_blank" rel="noopener">在新标签页中打开大图</a>
