@@ -1,0 +1,306 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AionUi + AionCore 项目架构",
+    "locale": "zh-CN",
+    "output": "aionui-architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1330,
+      640
+    ],
+    "views": [
+      {
+        "id": "main-path",
+        "label": "一次对话的链路",
+        "focus": [
+          "user",
+          "aionui",
+          "aioncore",
+          "runtime",
+          "aionrs",
+          "llm"
+        ],
+        "note": "从桌面窗口出发，经 Rust 后端拉起 Agent，最终调到模型 API。"
+      },
+      {
+        "id": "data",
+        "label": "数据落地",
+        "focus": [
+          "aioncore",
+          "sqlite"
+        ],
+        "note": "对话、消息、设置全部落在本机 SQLite。"
+      },
+      {
+        "id": "remote",
+        "label": "远程与渠道",
+        "focus": [
+          "webui",
+          "im",
+          "aioncore"
+        ],
+        "note": "WebUI 和 IM 渠道从外部打进同一个后端。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "用户",
+      "sublabel": "桌面 / 手机",
+      "pos": [
+        40,
+        320
+      ],
+      "size": [
+        130,
+        60
+      ]
+    },
+    {
+      "id": "webui",
+      "type": "frontend",
+      "label": "WebUI 远程访问",
+      "sublabel": "浏览器 / 手机",
+      "pos": [
+        40,
+        120
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "im",
+      "type": "external",
+      "label": "IM 渠道",
+      "sublabel": "微信 / 钉钉 / 飞书 / Telegram",
+      "pos": [
+        40,
+        500
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "aionui",
+      "type": "frontend",
+      "label": "AionUi 桌面端",
+      "sublabel": "Electron + React 19",
+      "tag": "TypeScript",
+      "pos": [
+        290,
+        320
+      ],
+      "size": [
+        180,
+        72
+      ]
+    },
+    {
+      "id": "aioncore",
+      "type": "backend",
+      "label": "aioncore 后端",
+      "sublabel": "Rust · Axum + Tokio",
+      "tag": "27 个 crate",
+      "pos": [
+        580,
+        320
+      ],
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "sqlite",
+      "type": "database",
+      "label": "SQLite",
+      "sublabel": "sqlx · 44 个迁移",
+      "pos": [
+        590,
+        500
+      ],
+      "size": [
+        170,
+        60
+      ]
+    },
+    {
+      "id": "runtime",
+      "type": "backend",
+      "label": "Agent 运行时",
+      "sublabel": "子进程 · ACP / MCP",
+      "pos": [
+        870,
+        320
+      ],
+      "size": [
+        170,
+        60
+      ]
+    },
+    {
+      "id": "aionrs",
+      "type": "backend",
+      "label": "内置引擎 aionrs",
+      "sublabel": "Git 依赖 v0.2.11",
+      "pos": [
+        1140,
+        220
+      ],
+      "size": [
+        150,
+        56
+      ]
+    },
+    {
+      "id": "extagents",
+      "type": "external",
+      "label": "外部 Agent CLI",
+      "sublabel": "Claude Code / Codex / Cursor…",
+      "pos": [
+        1140,
+        400
+      ],
+      "size": [
+        150,
+        56
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "cloud",
+      "label": "模型 API",
+      "sublabel": "OpenAI / Anthropic / Gemini…",
+      "pos": [
+        1140,
+        60
+      ],
+      "size": [
+        150,
+        56
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "你的电脑（本机）",
+      "wraps": [
+        "aionui",
+        "aioncore",
+        "sqlite",
+        "runtime",
+        "aionrs",
+        "extagents"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-to-aionui",
+      "from": "user",
+      "to": "aionui",
+      "label": "操作",
+      "variant": "emphasis"
+    },
+    {
+      "id": "webui-to-aioncore",
+      "from": "webui",
+      "to": "aioncore",
+      "label": "HTTP / WebSocket",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "top",
+      "via": [
+        [
+          675,
+          150
+        ]
+      ]
+    },
+    {
+      "id": "im-to-aioncore",
+      "from": "im",
+      "to": "aioncore",
+      "label": "消息回调",
+      "variant": "dashed"
+    },
+    {
+      "id": "aionui-to-aioncore",
+      "from": "aionui",
+      "to": "aioncore",
+      "label": "HTTP REST + WebSocket",
+      "variant": "emphasis"
+    },
+    {
+      "id": "aioncore-to-sqlite",
+      "from": "aioncore",
+      "to": "sqlite",
+      "label": "sqlx",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        675,
+        446
+      ]
+    },
+    {
+      "id": "aioncore-to-runtime",
+      "from": "aioncore",
+      "to": "runtime",
+      "label": "spawn 子进程"
+    },
+    {
+      "id": "runtime-to-aionrs",
+      "from": "runtime",
+      "to": "aionrs",
+      "label": "内置"
+    },
+    {
+      "id": "runtime-to-extagents",
+      "from": "runtime",
+      "to": "extagents",
+      "label": "ACP / stdio"
+    },
+    {
+      "id": "aionrs-to-llm",
+      "from": "aionrs",
+      "to": "llm",
+      "label": "模型调用"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "桌面端",
+      "items": [
+        "Electron 三进程：主进程 / 预加载 / 渲染",
+        "web-host 负责拉起 aioncore 并做健康检查"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Rust 后端",
+      "items": [
+        "27 个 crate 分四层：基础 / 能力 / 领域 / 组装",
+        "REST + WebSocket，JWT + CSRF 双提交"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Agent 生态",
+      "items": [
+        "内置 aionrs 引擎，开箱即用",
+        "外部 CLI 走 ACP / MCP，密钥加密存本机 SQLite"
+      ]
+    }
+  ]
+}

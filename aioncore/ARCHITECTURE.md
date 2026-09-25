@@ -1,0 +1,1 @@
+../../AionCore/ARCHITECTURE.md

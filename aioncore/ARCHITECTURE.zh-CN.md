@@ -1,0 +1,1 @@
+../../AionCore/ARCHITECTURE.zh-CN.md

@@ -1,0 +1,1 @@
+../../AionUi/CONTRIBUTING.zh.md
