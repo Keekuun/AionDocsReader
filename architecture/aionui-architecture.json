@@ -7,7 +7,7 @@
     "output": "aionui-architecture.html",
     "quality_profile": "showcase",
     "viewBox": [
-      1330,
+      1220,
       640
     ],
     "views": [
@@ -52,7 +52,7 @@
       "label": "用户",
       "sublabel": "桌面 / 手机",
       "pos": [
-        40,
+        30,
         320
       ],
       "size": [
@@ -66,11 +66,11 @@
       "label": "WebUI 远程访问",
       "sublabel": "浏览器 / 手机",
       "pos": [
-        40,
+        30,
         120
       ],
       "size": [
-        150,
+        140,
         60
       ]
     },
@@ -78,13 +78,13 @@
       "id": "im",
       "type": "external",
       "label": "IM 渠道",
-      "sublabel": "微信 / 钉钉 / 飞书 / Telegram",
+      "sublabel": "微信·钉钉·飞书·TG",
       "pos": [
-        40,
+        30,
         500
       ],
       "size": [
-        150,
+        140,
         60
       ]
     },
@@ -95,11 +95,11 @@
       "sublabel": "Electron + React 19",
       "tag": "TypeScript",
       "pos": [
-        290,
+        250,
         320
       ],
       "size": [
-        180,
+        170,
         72
       ]
     },
@@ -110,11 +110,11 @@
       "sublabel": "Rust · Axum + Tokio",
       "tag": "27 个 crate",
       "pos": [
-        580,
+        520,
         320
       ],
       "size": [
-        190,
+        180,
         72
       ]
     },
@@ -124,7 +124,7 @@
       "label": "SQLite",
       "sublabel": "sqlx · 44 个迁移",
       "pos": [
-        590,
+        525,
         500
       ],
       "size": [
@@ -138,11 +138,11 @@
       "label": "Agent 运行时",
       "sublabel": "子进程 · ACP / MCP",
       "pos": [
-        870,
+        790,
         320
       ],
       "size": [
-        170,
+        160,
         60
       ]
     },
@@ -152,7 +152,7 @@
       "label": "内置引擎 aionrs",
       "sublabel": "Git 依赖 v0.2.11",
       "pos": [
-        1140,
+        1030,
         220
       ],
       "size": [
@@ -164,9 +164,9 @@
       "id": "extagents",
       "type": "external",
       "label": "外部 Agent CLI",
-      "sublabel": "Claude Code / Codex / Cursor…",
+      "sublabel": "Claude Code / Codex…",
       "pos": [
-        1140,
+        1030,
         400
       ],
       "size": [
@@ -178,9 +178,9 @@
       "id": "llm",
       "type": "cloud",
       "label": "模型 API",
-      "sublabel": "OpenAI / Anthropic / Gemini…",
+      "sublabel": "OpenAI / Anthropic…",
       "pos": [
-        1140,
+        1030,
         60
       ],
       "size": [
@@ -221,7 +221,7 @@
       "toSide": "top",
       "via": [
         [
-          675,
+          610,
           150
         ]
       ]
@@ -237,7 +237,7 @@
       "id": "aionui-to-aioncore",
       "from": "aionui",
       "to": "aioncore",
-      "label": "HTTP REST + WebSocket",
+      "label": "HTTP + WS",
       "variant": "emphasis"
     },
     {
@@ -248,7 +248,7 @@
       "fromSide": "bottom",
       "toSide": "top",
       "labelAt": [
-        675,
+        610,
         446
       ]
     },
