@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 1 课：Agent 循环 —— 一切 Agent 的最小内核</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<div class="page">
+
+  <div class="course-tag">Agent 原理 · 第 1 课</div>
+  <h1>Agent 循环：一切 Agent 的最小内核</h1>
+  <p class="subtitle">学完这一课，你能用一句话说清任何 AI Agent 在干什么，并能在 aionrs 的真实源码里找到那个循环。</p>
+
+  <h2>一句话原理</h2>
+  <div class="callout key">
+    <strong>Agent = 一个 while 循环。</strong>把对话历史发给模型 → 模型要么给出最终答案（循环结束），要么要求调用工具 → 引擎执行工具、把结果塞回历史 → 再发给模型……直到模型说「答完了」。
+  </div>
+  <p>Claude Code、Codex、Cursor Agent、aionrs——外壳千差万别，内核都是这一个循环。所谓「生产级」，是在这个循环上加护栏、上下文管理和权限，我们后面几课逐个拆。</p>
+
+  <h2>四个运行时单位（背下来）</h2>
+  <p>aionrs 官方文档把一次任务拆成四层。这套术语后面每课都用：</p>
+  <table>
+    <tr><th>单位</th><th>含义</th><th>类比</th></tr>
+    <tr><td><strong>Run</strong></td><td>一次用户提问，从 <code>stream_start</code> 到 <code>stream_end</code></td><td>一通完整的客服电话</td></tr>
+    <tr><td><strong>Turn</strong></td><td>run 里面的一次模型往返：发请求、收流式响应</td><td>电话里的一问一答</td></tr>
+    <tr><td><strong>Tool round</strong></td><td>一个 turn 里模型要求的那一批工具调用（0 或 1 次）</td><td>客服放下电话去查资料</td></tr>
+    <tr><td><strong>Tool call / result</strong></td><td>一次工具调用和它对应的结果，成对出现</td><td>查一次资料、记一条笔记</td></tr>
+  </table>
+  <p>数量关系：<code>run 1:N turn</code>，<code>turn 0:1 tool_round</code>，<code>tool_round 1:N tool_call</code>。</p>
+  <span class="file-ref">📄 出处（本机真实文件）：~/.cargo/git/checkouts/aionrs-c860c928cccf810e/8e61a90/docs/core-concepts.md</span>
+
+  <h2>真实代码里的循环</h2>
+  <p>aionrs 的循环在 <code>engine.rs</code> 的 <code>run_inner</code> 函数里。删掉细节后，骨架就是这么点：</p>
+  <pre><code><span class="kw">loop</span> {
+    <span class="cmt">// 护栏：超过轮次预算就停，报告「没收敛」</span>
+    <span class="kw">if</span> guards.turn_budget_reached() { <span class="kw">return</span> MaxTurns; }
+
+    <span class="cmt">// 一个 turn：把历史发给模型，收流式响应</span>
+    <span class="kw">let</span> outcome = <span class="fn">run_turn</span>().await?;
+
+    <span class="kw">match</span> outcome {
+        <span class="cmt">// 模型给了最终答案 → 写入历史，run 结束</span>
+        Final(text)   => { push_history(Assistant, text); <span class="kw">return</span> Done; }
+        <span class="cmt">// 模型要调工具 → 执行这一批，结果写回历史，继续循环</span>
+        ToolRound(calls) => {
+            push_history(Assistant, calls);
+            <span class="kw">let</span> results = <span class="fn">execute_tool_round</span>(calls).await?;
+            push_history(User, results);   <span class="cmt">// ← 结果伪装成 User 消息</span>
+        }
+    }
+}</code></pre>
+  <span class="file-ref">📄 真实代码：~/.cargo/git/checkouts/aionrs-c860c928cccf810e/8e61a90/crates/aion-agent/src/engine.rs 第 514 行的 loop</span>
+  <div class="callout">
+    <strong>注意一个反直觉的细节：</strong>工具结果是以 <strong>User</strong> 角色写回历史的，不是 Assistant。因为对模型来说，「工具返回的内容」就是新的输入。这是所有工具型 agent 的通用做法。
+  </div>
+
+  <h2>亲手走一遍（交互模拟）</h2>
+  <p>点「下一步」，跟着引擎把「帮我看下 Cargo.toml 的依赖并解释」这个任务跑完。注意每一步是谁在说话、历史里累积了什么。</p>
+
+  <div class="sim" id="sim">
+    <div class="sim-stage">
+      <div class="sim-step active">
+        <span class="sim-actor engine">引擎</span>
+        <p>收到用户输入，写入历史，<strong>run 开始</strong>。</p>
+        <pre><code>history = [User("看下 Cargo.toml 的依赖并解释")]</code></pre>
+      </div>
+      <div class="sim-step">
+        <span class="sim-actor model">模型 · Turn 1</span>
+        <p>模型看完历史，决定：「我得先读文件」。不输出答案，而是返回两个工具调用。</p>
+        <pre><code>tool_calls = [Read("Cargo.toml"), Grep("dependencies")]</code></pre>
+      </div>
+      <div class="sim-step">
+        <span class="sim-actor tool">工具 · Tool round 1</span>
+        <p>引擎并行执行这批调用，把结果<strong>以 User 角色</strong>写回历史。</p>
+        <pre><code>history += [Assistant(tool_calls),
+            User(Read 结果), User(Grep 结果)]</code></pre>
+      </div>
+      <div class="sim-step">
+        <span class="sim-actor model">模型 · Turn 2</span>
+        <p>历史里现在有文件内容了。模型决定：「信息够了」。</p>
+        <pre><code>返回最终文本：「这个 workspace 有 12 个 crate……」</code></pre>
+      </div>
+      <div class="sim-step">
+        <span class="sim-actor engine">引擎</span>
+        <p>最终答案写入历史，发出 <code>stream_end</code>，<strong>run 结束</strong>。</p>
+        <pre><code>本次 run：2 个 turn，1 个 tool round，2 对 tool call/result</code></pre>
+      </div>
+    </div>
+    <div class="sim-controls">
+      <button id="sim-next">下一步 →</button>
+      <button id="sim-reset" class="ghost" hidden>重新来一遍</button>
+      <span class="sim-progress" id="sim-progress">第 1 / 5 步</span>
+    </div>
+  </div>
+
+  <h2>生产级的第一块砖：护栏</h2>
+  <p>玩具 agent 和生产 agent 的第一个分水岭，藏在刚才那个循环的 <code>guards</code> 里。真实代码里每个 run 都带着这些防护：</p>
+  <table>
+    <tr><th>护栏</th><th>防什么</th></tr>
+    <tr><td><code>max_turns</code></td><td>模型陷入工具死循环，把 token 预算烧光</td></tr>
+    <tr><td>malformed 重试上限</td><td>模型输出格式坏掉的工具调用，无限重试</td></tr>
+    <tr><td>empty-final 重试</td><td>模型把工具调用藏在「思考」里，正式回答却是空的</td></tr>
+  </table>
+  <p>没有护栏的循环，线上跑一次死循环就是一笔真金白银的账单。这就是为什么第 6 课会专门讲防护与停止条件。</p>
+
+  <h2>小测验（即时反馈）</h2>
+  <div class="quiz" data-quiz='[
+    {"q":"一个 turn 里模型返回了 tool_calls，引擎下一步做什么？",
+     "options":[
+       {"t":"执行这批工具，结果写回历史，再开新 turn","ok":true},
+       {"t":"执行这批工具，结果直接输出，然后结束 run","ok":false},
+       {"t":"拒绝执行工具，要求模型改成纯文本再回答","ok":false}],
+     "why":"对。工具结果写回历史后进入下一 turn，模型基于新信息继续。",
+     "hint":"回想模拟器里 Tool round 之后发生了什么。"},
+    {"q":"run 和 turn 的数量关系是？",
+     "options":[
+       {"t":"一个 run 恰好一个 turn，两者完全等价","ok":false},
+       {"t":"一个 turn 含多个 run，按用户输入切分","ok":false},
+       {"t":"一个 run 含多个 turn，直到模型给出终答","ok":true}],
+     "why":"对。run 1:N turn，循环在模型给出最终答案时退出。",
+     "hint":"客服电话的类比：一通电话里有几轮问答？"},
+    {"q":"max_turns 这类护栏为什么必须存在？",
+     "options":[
+       {"t":"防止用户输入太长，超出模型的上下文窗口","ok":false},
+       {"t":"防止模型陷入工具循环，把调用预算烧光","ok":true},
+       {"t":"防止工具执行得太慢，拖慢前端界面响应","ok":false}],
+     "why":"对。没有预算上限的循环，一次失控就是一笔真实账单。",
+     "hint":"想想 while 循环最怕什么。"}
+  ]'></div>
+  <p class="quiz-done" hidden>🎉 三题全对。你已经掌握了 agent 的最小内核——可以进入动手任务了。</p>
+
+  <h2>动手任务（15 分钟）</h2>
+  <div class="task">
+    <h3>在真实代码里找到那个循环</h3>
+    <p>1. 在 Cursor 里打开这个文件（可以直接拖进编辑器）：</p>
+    <span class="file-ref">~/.cargo/git/checkouts/aionrs-c860c928cccf810e/8e61a90/crates/aion-agent/src/engine.rs</span>
+    <p>2. 跳到第 <strong>514</strong> 行，找到 <code>loop {</code>。</p>
+    <p>3. 往下读 100 行，找到三种 <code>TurnOutcome</code>：<code>ToolRound</code>、<code>Final</code>、<code>Truncated</code> 各自的分支。</p>
+    <div class="done-criterion">
+      <strong>✓ 完成标志：</strong>能说出 <code>ToolRound</code> 分支里两次 <code>push_history</code> 分别用什么角色（Assistant / User）写入了什么。答不上来就回上面「真实代码里的循环」重读。
+    </div>
+  </div>
+
+  <h2>延伸阅读（按优先级）</h2>
+  <p>1. <strong>本课的一手来源</strong>：aionrs 的 <code>docs/core-concepts.md</code>（和上面 file-ref 同目录），里面有官方时序图。</p>
+  <p>2. <a href="https://www.anthropic.com/engineering/building-effective-agents">Anthropic: Building Effective Agents</a>——读前半部分「what are agents」即可，后半部分我们后面的课会结合源码讲。</p>
+
+  <footer>
+    <p>📚 本课是「造出自己的生产级 Agent」系列的第 1 课。任何地方卡住，直接问你的 AI 助手——它就是你的老师，可以讲到你懂为止。</p>
+    <p>下一课预告：《工具：Agent 的手和眼》——工具是怎么定义、注册、被模型发现的（aionrs 的 ToolRegistry 和 MCP）。</p>
+    <div class="lesson-nav">
+      <span></span>
+      <span>第 1 课 / 持续更新中</span>
+    </div>
+  </footer>
+
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+(function () {
+  var steps = document.querySelectorAll('#sim .sim-step');
+  var next = document.getElementById('sim-next');
+  var reset = document.getElementById('sim-reset');
+  var progress = document.getElementById('sim-progress');
+  var i = 0;
+  function show(n) {
+    steps.forEach(function (s, k) { s.classList.toggle('active', k === n); });
+    progress.textContent = '第 ' + (n + 1) + ' / ' + steps.length + ' 步';
+    next.disabled = n >= steps.length - 1;
+    next.textContent = n >= steps.length - 1 ? 'run 已结束' : '下一步 →';
+    reset.hidden = n < steps.length - 1;
+  }
+  next.addEventListener('click', function () { if (i < steps.length - 1) { i += 1; show(i); } });
+  reset.addEventListener('click', function () { i = 0; show(0); });
+})();
+</script>
+</body>
+</html>

@@ -55,10 +55,11 @@ const RECOMMENDED: { text: string; file: string }[] = [
   { text: '① AionUi 学习上手（先读这篇）', file: 'aionui/docs/architecture/学习上手.md' },
   { text: '② AionCore 学习上手（Rust 零基础）', file: 'aioncore/docs/学习上手.md' },
   { text: '③ 项目架构图（交互式）', file: 'architecture.md' },
-  { text: '④ AionUi 官方开发指南', file: 'aionui/docs/contributing/development.md' },
-  { text: '⑤ AionUi 目录与命名规范', file: 'aionui/docs/contributing/file-structure.md' },
-  { text: '⑥ AionCore 官方架构文档', file: 'aioncore/ARCHITECTURE.zh-CN.md' },
-  { text: '⑦ AionCore AGENTS 规则', file: 'aioncore/AGENTS.md' },
+  { text: '④ Agent 原理课（造自己的 Agent）', file: 'agent-course.md' },
+  { text: '⑤ AionUi 官方开发指南', file: 'aionui/docs/contributing/development.md' },
+  { text: '⑥ AionUi 目录与命名规范', file: 'aionui/docs/contributing/file-structure.md' },
+  { text: '⑦ AionCore 官方架构文档', file: 'aioncore/ARCHITECTURE.zh-CN.md' },
+  { text: '⑧ AionCore AGENTS 规则', file: 'aioncore/AGENTS.md' },
 ];
 
 const recommendedAbs = new Set(RECOMMENDED.map((r) => path.join(SITE_ROOT, r.file)));
