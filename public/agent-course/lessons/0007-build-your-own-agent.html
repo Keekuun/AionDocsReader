@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 7 课（终课）：动手写你自己的最小 Agent</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<div class="page">
+
+  <div class="course-tag">Agent 原理 · 第 7 课 · 终课</div>
+  <h1>动手写你自己的最小 Agent</h1>
+  <p class="subtitle">前六课读的每一行 aionrs 源码，这一课都变成你自己指尖的代码。用 TypeScript 写一个 80 行的真 agent：循环 + 工具 + 护栏，能真的读你电脑上的文件。</p>
+
+  <h2>完整代码（每一行你都认识）</h2>
+  <p>新建文件 <code>agent.ts</code>。注释里标注了每段对应哪一课：</p>
+  <pre><code><span class="kw">import</span> fs <span class="kw">from</span> 'node:fs';
+
+<span class="kw">const</span> API_KEY  = process.env.OPENAI_API_KEY;
+<span class="kw">const</span> BASE_URL = process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
+<span class="kw">const</span> MODEL    = process.env.MODEL ?? 'gpt-4o-mini';
+<span class="kw">const</span> MAX_TURNS = 8;                    <span class="cmt">// ← 第 6 课：护栏</span>
+
+<span class="cmt">// ── 工具（第 2 课：三张名片 + execute）──</span>
+<span class="kw">const</span> tools = [
+  {
+    name: 'read_file',
+    description: '读取本地文件内容。file_path 必须是绝对路径。',
+    schema: { type: 'object', required: ['file_path'],
+              properties: { file_path: { type: 'string' } } },
+    execute: ({ file_path }) =>
+      fs.readFileSync(file_path, 'utf8').slice(0, 2000),  <span class="cmt">// ← 截断（第 3 课）</span>
+  },
+  {
+    name: 'list_dir',
+    description: '列出目录下的文件。path 必须是绝对路径。',
+    schema: { type: 'object', required: ['path'],
+              properties: { path: { type: 'string' } } },
+    execute: ({ path }) => fs.readdirSync(path).join('\n'),
+  },
+];
+
+<span class="cmt">// ── 循环（第 1 课）──</span>
+<span class="kw">async function</span> <span class="fn">run</span>(question) {
+  <span class="kw">const</span> messages = [{ role: 'user', content: question }];
+  <span class="kw">for</span> (<span class="kw">let</span> turn = 0; turn < MAX_TURNS; turn++) {
+    <span class="kw">const</span> res = <span class="kw">await</span> <span class="fn">fetch</span>(`${BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${API_KEY}` },
+      body: JSON.stringify({
+        model: MODEL, messages,
+        tools: tools.map(t => ({           <span class="cmt">// ← 名片打包进请求（第 2 课）</span>
+          type: 'function',
+          function: { name: t.name, description: t.description,
+                      parameters: t.schema },
+        })),
+      }),
+    });
+    <span class="kw">const</span> msg = (<span class="kw">await</span> res.json()).choices[0].message;
+    messages.<span class="fn">push</span>(msg);                   <span class="cmt">// assistant 入历史</span>
+
+    <span class="kw">if</span> (!msg.tool_calls?.length) {       <span class="cmt">// 最终答案 → 循环结束</span>
+      console.log('\n最终回答:\n' + msg.content);
+      <span class="kw">return</span>;
+    }
+    <span class="kw">for</span> (<span class="kw">const</span> call <span class="kw">of</span> msg.tool_calls) {  <span class="cmt">// tool round</span>
+      <span class="kw">const</span> tool = tools.<span class="fn">find</span>(t => t.name === call.function.name);
+      <span class="kw">const</span> args = JSON.<span class="fn">parse</span>(call.function.arguments);
+      console.log(`→ 调用工具 ${call.function.name}(${JSON.stringify(args)})`);
+      <span class="kw">const</span> result = tool ? tool.<span class="fn">execute</span>(args)
+                          : `未知工具: ${call.function.name}`;
+      messages.<span class="fn">push</span>({ role: 'tool', tool_call_id: call.id,
+                      content: <span class="fn">String</span>(result) });  <span class="cmt">// 结果写回历史</span>
+    }
+  }
+  console.log('达到 max_turns，任务未收敛');  <span class="cmt">// 熔断</span>
+}
+
+<span class="fn">run</span>(process.argv[2] ??
+  '看看当前目录有什么文件，读一下 package.json 告诉我项目名字');</code></pre>
+
+  <div class="callout">
+    <strong>一个细节：</strong>OpenAI 兼容 API 用专门的 <code>role: 'tool'</code> 装工具结果；Anthropic 风格（aionrs）是伪装成 <code>user</code> 消息。写法不同，思想相同——<strong>工具结果作为新的输入回到历史</strong>。
+  </div>
+
+  <h2>动手任务（30 分钟，本课的完成即本课程的里程碑）</h2>
+  <div class="task">
+    <h3>让你的 agent 真的跑起来</h3>
+    <p>1. 把上面代码存为 <code>agent.ts</code>（放在任意目录）。</p>
+    <p>2. 设置环境变量（任何 OpenAI 兼容服务都行——OpenAI / DeepSeek / Kimi / 本地 Ollama）：</p>
+    <pre><code>export OPENAI_API_KEY=你的key
+export OPENAI_BASE_URL=https://api.deepseek.com/v1  <span class="cmt"># 以你用的服务为准</span>
+export MODEL=deepseek-chat</code></pre>
+    <p>3. 跑起来：</p>
+    <pre><code>~/.bun/bin/bun agent.ts</code></pre>
+    <p>4. 观察输出：应该看到 <code>→ 调用工具 list_dir(...)</code>，然后 <code>→ 调用工具 read_file(...)</code>，最后是基于真实文件内容的最终回答。</p>
+    <div class="done-criterion">
+      <strong>✓ 完成标志：</strong>agent 通过真实工具调用读到了 package.json 并答对项目名。然后做三个进阶实验，每个都对应一课：① 把 MAX_TURNS 改成 1，问一个需要两步的问题，观察熔断；② 把 read_file 的 description 里「绝对路径」删掉，看模型会不会开始传相对路径（亲身体会 description 即 prompt）；③ 问一个目录里不存在的东西，看错误结果如何写回历史、模型如何自我纠正。
+    </div>
+  </div>
+
+  <h2>从玩具到生产：六课对照清单</h2>
+  <p>你的 80 行 agent 和 aionrs 的差距，就是前六课的内容。逐项对照，这就是你以后迭代的路线图：</p>
+  <table>
+    <tr><th>课</th><th>机制</th><th>你的玩具</th><th>生产级（aionrs）</th></tr>
+    <tr><td>1</td><td>循环</td><td>✅ 已有</td><td>+ 流式输出、turn 锚点、abort</td></tr>
+    <tr><td>2</td><td>工具</td><td>✅ 两个</td><td>+ 注册表、并发安全、MCP 代理、延迟加载</td></tr>
+    <tr><td>3</td><td>上下文</td><td>⚠️ 只有截断</td><td>+ 三级压缩、持久记忆、prompt 缓存</td></tr>
+    <tr><td>4</td><td>权限</td><td>❌ 没有</td><td>+ 确认器、允许列表、plan 只读模式</td></tr>
+    <tr><td>5</td><td>会话</td><td>❌ 内存</td><td>+ 每步落盘、文件锁、fork、格式迁移</td></tr>
+    <tr><td>6</td><td>防护</td><td>⚠️ 只有 max_turns</td><td>+ 失败熔断、周期检测、模型自救警告</td></tr>
+  </table>
+  <div class="callout key">
+    <strong>建议的迭代顺序：</strong>先加权限确认（一个 readline 询问就够），再加会话落盘（每步写 JSON 文件），最后上压缩。每加一个机制，你的 agent 就向生产级迈一步——而且你知道每个机制在 aionrs 里的参考实现在哪。
+  </div>
+
+  <h2>小测验（毕业考）</h2>
+  <div class="quiz" data-quiz='[
+    {"q":"这个 80 行 agent 里，模型决定读文件时实际发生了什么？",
+     "options":[
+       {"t":"模型输出工具调用请求，引擎执行后写回历史","ok":true},
+       {"t":"模型直接读取了文件内容并放进回答里","ok":false},
+       {"t":"引擎替模型决定该去读哪一个文件","ok":false}],
+     "why":"对。这就是第 1、2 课的核心：循环 + 工具请求。",
+     "hint":"模型只有请求权，没有执行权。"},
+    {"q":"删掉 description 里「绝对路径」的要求后，最可能发生什么？",
+     "options":[
+       {"t":"模型开始传相对路径，工具调用频繁失败","ok":true},
+       {"t":"没有任何变化，模型本来就知道规则","ok":false},
+       {"t":"引擎会自动把相对路径补全为绝对","ok":false}],
+     "why":"对。description 是模型唯一的依据——这就是「说明书即 prompt」。",
+     "hint":"模型的全部依据只有三张名片。"},
+    {"q":"要把这个玩具往生产级迭代，第一个该加的机制是？",
+     "options":[
+       {"t":"权限确认，因为危险动作要先有人批","ok":true},
+       {"t":"上下文压缩，因为对话肯定会变长","ok":false},
+       {"t":"会话分叉，因为用户想要平行对话","ok":false}],
+     "why":"对。能写文件的 agent 没有确认机制，第一个事故只是时间问题。",
+     "hint":"哪个机制的缺失会最先造成真实损失？"}
+  ]'></div>
+  <p class="quiz-done" hidden>🎉 毕业考通过！你已经具备造生产级 agent 的完整地图。</p>
+
+  <h2>毕业之后</h2>
+  <p>课程到这里，使命的第一阶段完成了：你理解了原理，也有了能跑的最小实现。接下来的路：</p>
+  <p>1. <strong>迭代你的 agent</strong>：按上面的对照清单逐项加机制，每加一项就回 aionrs 源码看参考实现。</p>
+  <p>2. <strong>读 aionrs 的 <code>docs/advanced.md</code></strong>：hook 系统、plan mode、skills——这些是下一层的设计。</p>
+  <p>3. <strong>加入社区</strong>（RESOURCES.md 里有链接）：真实问题去真实社区碰。</p>
+
+  <footer>
+    <p>📚 这个系列会持续更新。学习中任何问题，随时问我——贴上报错、贴上代码，我们现场调试。</p>
+    <div class="lesson-nav">
+      <a href="0006-guards-and-stop-conditions.html">← 第 6 课：防护与停止条件</a>
+      <span>第 7 课 · 终课</span>
+    </div>
+  </footer>
+
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

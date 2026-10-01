@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 4 课：权限与确认 —— 让人类保持控制权</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<div class="page">
+
+  <div class="course-tag">Agent 原理 · 第 4 课</div>
+  <h1>权限与确认：让人类保持控制权</h1>
+  <p class="subtitle">agent 能写文件、能执行 shell——能力越大，闯祸越快。学完这课，你能说清确认机制的设计，并理解「自动批准」和「允许列表」各自的代价。</p>
+
+  <h2>问题：循环里全是危险动作</h2>
+  <p>第 2 课的工具清单里，Read 无害，但 <code>Write</code> 会覆盖文件，<code>Edit</code> 会改代码，<code>ExecCommand</code> 能执行任意 shell——包括 <code>rm -rf</code>。而第 1 课的循环是<strong>自动</strong>跑的：模型每个 turn 都可能发起新的危险调用，没有人类介入的话，一次幻觉就是一次事故。</p>
+  <div class="callout key">
+    <strong>核心原则：</strong>自主性（autonomy）和控制权（control）是一对矛盾。生产级 agent 不追求「全自动」，而是追求「<strong>可校准的自主</strong>」——危险动作默认要人批，被信任的动作才放行。
+  </div>
+
+  <h2>aionrs 的确认器（真实代码）</h2>
+  <p>aion-agent 里的 <code>ToolConfirmer</code> 只有几十行，但把确认模型说全了：</p>
+  <pre><code><span class="kw">pub fn</span> <span class="fn">check</span>(tool_name, tool_input_display) -> ConfirmResult {
+    <span class="cmt">// ① 全局自动批准开着 → 直接放行（YOLO 模式）</span>
+    <span class="cmt">// ② 工具在允许列表里   → 直接放行</span>
+    <span class="kw">if</span> auto_approve || allow_list.contains(tool_name) {
+        <span class="kw">return</span> Approved;
+    }
+    <span class="cmt">// ③ 否则问人类：[y]es / [n]o / [a]lways / [q]uit</span>
+    <span class="cmt">//    选 a → 把这个工具加进允许列表，以后不再问</span>
+}</code></pre>
+  <span class="file-ref">📄 真实代码：aion-agent/src/confirm.rs 第 36 行</span>
+  <p>四个选项的设计很讲究：<code>y</code> 批这一次，<code>n</code> 拒这一次，<code>a</code> 永久信任这个工具，<code>q</code> 终止整个 run。用户在「被打扰次数」和「控制风险」之间自己找平衡。</p>
+
+  <h2>从引擎到界面：确认是一次跨进程往返</h2>
+  <p>aionrs 是引擎，不直接弹窗。在完整产品里，确认请求要穿过几层到达人类：</p>
+  <pre><code>模型发起 tool_use（比如 Write /exec rm 命令）
+  → 引擎暂停这个 tool round
+  → AionCore 产生一条 confirmation 记录，WebSocket 推给界面
+  → AionUi 弹出确认框，人类点「允许 / 拒绝」
+  → POST /api/conversations/:id/confirmations/:callId/confirm
+  → 引擎收到结果，继续或放弃这个工具调用</code></pre>
+  <span class="file-ref">📄 你在 AionCore 见过这条链路：crates/aionui-conversation/src/routes.rs 里的 confirmations 路由</span>
+  <p>关键设计：<strong>循环在等确认时是暂停的</strong>，工具结果只有获批后才产生。被拒绝的调用也会作为结果写回历史（「用户拒绝了」），模型据此换方案而不是硬闯。</p>
+
+  <h2>三种放行策略的代价（交互权衡）</h2>
+  <p>点选下面的策略，看各自的真实代价：</p>
+  <div class="sim">
+    <div class="sim-stage">
+      <div class="sim-step active" style="display:block">
+        <p>
+          <button class="quiz-opt policy" data-p="0">全部都要确认（最严）</button>
+          <button class="quiz-opt policy" data-p="1">允许列表 + 确认（默认）</button>
+          <button class="quiz-opt policy" data-p="2">全自动 YOLO（最松）</button>
+        </p>
+        <div class="callout" id="policy-msg" style="min-height:96px">选一个策略，看它的适用场景和代价。</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>小测验（即时反馈）</h2>
+  <div class="quiz" data-quiz='[
+    {"q":"用户选 [a]lways 之后，这个工具下次还会问吗？",
+     "options":[
+       {"t":"不会，工具名被加进了允许列表","ok":true},
+       {"t":"会，always 只对本次 run 内有效","ok":false},
+       {"t":"会，每次执行前都要重新确认下","ok":false}],
+     "why":"对。allow_list 是运行期持久的，选了 a 就不再打扰。",
+     "hint":"看 check() 的第②个分支。"},
+    {"q":"人类拒绝了某个工具调用后，接下来发生什么？",
+     "options":[
+       {"t":"拒绝结果写回历史，模型换方案继续","ok":true},
+       {"t":"整个 run 立即终止，不再继续执行","ok":false},
+       {"t":"引擎忽略拒绝，换个参数重试调用","ok":false}],
+     "why":"对。拒绝也是信息，模型据此调整策略——这就是人在环内。",
+     "hint":"拒绝不是崩溃，是反馈。"},
+    {"q":"为什么生产环境默认不开 YOLO 全自动？",
+     "options":[
+       {"t":"模型一次幻觉就可能造成真实破坏","ok":true},
+       {"t":"全自动模式下模型输出质量下降","ok":false},
+       {"t":"确认流程能显著提升模型的智力","ok":false}],
+     "why":"对。自主性和控制权是矛盾，危险动作默认要人批。",
+     "hint":"想想 rm -rf。"}
+  ]'></div>
+  <p class="quiz-done" hidden>🎉 三题全对。权限模型你已经清楚了。</p>
+
+  <h2>动手任务（10 分钟）</h2>
+  <div class="task">
+    <h3>在 AionUi 里触发一次真实确认</h3>
+    <p>1. 启动 AionUi（<code>bun run start</code>，别忘了 <code>unset ELECTRON_RUN_AS_NODE</code>）。</p>
+    <p>2. 新建对话，发一条需要写文件的消息，比如「在当前目录创建一个 hello.txt，写上今天的日期」。</p>
+    <p>3. 观察弹出的确认框，先点一次「拒绝」，看 agent 怎么回应；再发一次，点「允许」。</p>
+    <div class="done-criterion">
+      <strong>✓ 完成标志：</strong>能说出拒绝之后 agent 的行为变化（它收到「被拒绝」的结果，换策略或解释原因），并在 AionCore 的 routes.rs 里找到处理你点击的那条路由（搜 <code>confirmations</code>）。
+    </div>
+  </div>
+
+  <h2>延伸阅读</h2>
+  <p>1. 本机 aionrs 的 <code>docs/advanced.md</code> 的 plan mode 一节——只读探索模式，是权限设计的另一面。</p>
+  <p>2. AionCore 的 <code>crates/aionui-conversation/src/routes.rs</code> 里 confirmations 相关的三条路由。</p>
+
+  <footer>
+    <p>📚 卡住就问我。</p>
+    <p>下一课预告：《会话与持久化》——关掉窗口再打开，对话怎么还在？session 的存取、锁和分叉。</p>
+    <div class="lesson-nav">
+      <a href="0003-context-engineering.html">← 第 3 课：上下文工程</a>
+      <span>第 4 课 / 持续更新中</span>
+    </div>
+  </footer>
+
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+(function () {
+  var msg = document.getElementById('policy-msg');
+  var texts = [
+    '<b>全部确认。</b>最安全，但每次写文件都弹窗。适合：生产服务器、陌生代码库、初学者建立信任期。代价：人成了瓶颈，长任务寸步难行。',
+    '<b>允许列表 + 确认。</b>aionrs 的默认。Read/Grep 这类只读工具直接放行，Write/Exec 首次询问、信任后不再问。适合：日常开发。代价：允许列表一旦给错工具，风险持续存在。',
+    '<b>全自动 YOLO。</b>什么都不问。适合：一次性沙箱、容器里跑实验、CI 里的只读分析。代价：一次幻觉就是真实破坏——AionUi 的 YOLO 模式也只对支持的 agent 开放，且明确标注风险。'
+  ];
+  document.querySelectorAll('.policy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.policy').forEach(function (b) { b.classList.remove('correct'); });
+      btn.classList.add('correct');
+      msg.innerHTML = texts[+btn.dataset.p];
+    });
+  });
+})();
+</script>
+</body>
+</html>

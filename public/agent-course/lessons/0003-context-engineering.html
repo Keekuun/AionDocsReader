@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 3 课：上下文工程 —— 对话变长之后</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<div class="page">
+
+  <div class="course-tag">Agent 原理 · 第 3 课</div>
+  <h1>上下文工程：对话变长之后</h1>
+  <p class="subtitle">每个 turn 都要把全部历史发给模型，而模型的上下文窗口是有限的、按 token 收费的。学完这课，你能说清 aionrs 的三级压缩策略，并理解为什么「省 token」是生产级 agent 的核心成本线。</p>
+
+  <h2>问题有多严重</h2>
+  <p>回看第 1 课的循环：每个 turn 都把<strong>完整历史</strong>发给模型。一次读文件可能带回几千行，十轮工具调用下来，历史轻松突破几万 token。三个后果：</p>
+  <table>
+    <tr><th>后果</th><th>原因</th></tr>
+    <tr><td><strong>变贵</strong></td><td>每个 turn 都为全部历史付费，成本随对话长度平方级增长</td></tr>
+    <tr><td><strong>变慢</strong></td><td>首 token 延迟随输入长度上升</td></tr>
+    <tr><td><strong>变笨</strong></td><td>长上下文里关键信息被淹没（"lost in the middle"），撞墙就直接报错</td></tr>
+  </table>
+  <div class="callout key">
+    <strong>核心原则：</strong>上下文是 agent 最稀缺的资源。生产级 agent 不是「把一切都发给模型」，而是「每个 turn 只发此刻最有用的东西」。管理上下文 = 管理 agent 的注意力。
+  </div>
+
+  <h2>aionrs 的三级压缩（真实实现）</h2>
+  <p>aionrs 的 <code>compact</code> 模块按严重程度分三级，逐级升级：</p>
+  <table>
+    <tr><th>级别</th><th>触发条件</th><th>做法</th><th>调用 LLM？</th></tr>
+    <tr><td><strong>Microcompact</strong></td><td>工具结果数量超阈值，或离上次压缩时间太久</td><td>清空<strong>旧的</strong>工具结果内容，只保留最近 N 条</td><td>否（零成本）</td></tr>
+    <tr><td><strong>Autocompact</strong></td><td>输入 token 接近上下文上限</td><td>让 LLM 把整段对话总结成摘要，带着摘要继续</td><td>是（花一次钱）</td></tr>
+    <tr><td><strong>Emergency</strong></td><td>输入 token 逼近绝对上限</td><td>阻止继续调用 API，请用户开新会话</td><td>否（直接拒绝）</td></tr>
+  </table>
+  <span class="file-ref">📄 真实代码：aion-agent/src/compact/mod.rs（模块头注释就是这张表）；官方说明在 docs/advanced.md 的 Context Compression 一节</span>
+
+  <h2>为什么是这个顺序</h2>
+  <p>三级策略体现一条通用的工程设计原则：<strong>先用便宜的手段，不够再升级</strong>。</p>
+  <p>第一级最精妙：工具结果（文件内容、命令输出）是历史里<strong>体积最大、时效最短</strong>的部分——模型用完一次就很少再需要原文。清掉它们不调 LLM、不花一分钱，却能腾出大半空间。第 2 课讲的 Read 文件缓存（「文件没变，看之前的」）也是同一思路：不重复发送。</p>
+  <p>第二级才动用 LLM 做摘要——准确但有成本有延迟。第三级是兜底熔断：宁可停下来请用户开新会话，也不让请求带着超限的上下文白白失败。</p>
+
+  <h2>亲手感受（交互）</h2>
+  <p>拖动滑块模拟对话变长，看三级压缩分别在什么时候介入：</p>
+  <div class="sim">
+    <div class="sim-stage">
+      <div class="sim-step active" style="display:block">
+        <p style="text-align:center;font-size:15px">
+          <input type="range" id="ctx-slider" min="0" max="100" value="15" style="width:60%">
+        </p>
+        <p style="text-align:center;font-size:14px;color:var(--ink-faint)">上下文占用：<b id="ctx-pct">15%</b></p>
+        <div style="height:14px;background:var(--code-bg);border-radius:7px;overflow:hidden;margin:10px 0">
+          <div id="ctx-bar" style="height:100%;width:15%;background:#1a7f4b;transition:all .2s"></div>
+        </div>
+        <div class="callout" id="ctx-msg" style="min-height:72px">一切正常。历史原样发送，模型看到全部细节。</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>还有一条腿：持久记忆</h2>
+  <p>压缩解决「单次对话太长」，但跨会话怎么办？aionrs 的 <code>aion-memory</code> crate 做项目级持久记忆：把值得长期记住的东西（项目约定、用户偏好）存下来，新会话自动索引注入。压缩是「忘得聪明」，记忆是「记住该记的」——方向相反，目标相同：让模型每个 turn 看到的都是高价值内容。</p>
+
+  <h2>小测验（即时反馈）</h2>
+  <div class="quiz" data-quiz='[
+    {"q":"Microcompact 清空的是历史里的哪部分？",
+     "options":[
+       {"t":"旧的工具结果，保留最近 N 条","ok":true},
+       {"t":"用户最早提出的几条消息内容","ok":false},
+       {"t":"模型思考过程的中间推理文本","ok":false}],
+     "why":"对。工具结果体积最大、时效最短，清掉零成本。",
+     "hint":"历史里什么内容最大又最容易过时？"},
+    {"q":"三级压缩按什么原则排序？",
+     "options":[
+       {"t":"先用便宜的手段，不够再逐级升级","ok":true},
+       {"t":"先用最准确的手段，保证摘要质量","ok":false},
+       {"t":"随机选择压缩级别，分散失败风险","ok":false}],
+     "why":"对。零成本的 microcompact 先行，LLM 摘要其次，熔断兜底。",
+     "hint":"哪一级不花一分钱？"},
+    {"q":"为什么每个 turn 都重复发送历史会特别烧钱？",
+     "options":[
+       {"t":"历史随对话变长，成本近似平方增长","ok":true},
+       {"t":"模型对重复内容收取额外的惩罚费","ok":false},
+       {"t":"流式输出按历史条数来逐条计费","ok":false}],
+     "why":"对。第 N 个 turn 发送 N 份累积历史，总量约是 N²/2。",
+     "hint":"想想第 10 个 turn 发了多少内容。"}
+  ]'></div>
+  <p class="quiz-done" hidden>🎉 三题全对。上下文工程的核心你已经掌握。</p>
+
+  <h2>动手任务（15 分钟）</h2>
+  <div class="task">
+    <h3>读三级压缩的模块注释</h3>
+    <p>1. 打开 <code>aion-agent/src/compact/mod.rs</code>（路径见本课 file-ref），读文件头的模块注释——它是这张三级表的权威定义。</p>
+    <p>2. 打开同目录的 <code>micro.rs</code>，找到它判断「哪些工具结果算旧」的逻辑。</p>
+    <div class="done-criterion">
+      <strong>✓ 完成标志：</strong>能回答——microcompact 触发时，最近几条工具结果会被保留？（在 micro.rs 里找那个数字或配置项。）
+    </div>
+  </div>
+
+  <h2>延伸阅读</h2>
+  <p>1. 本机 aionrs 的 <code>docs/advanced.md</code> 的 Context Compression 和 Memory 两节。</p>
+  <p>2. <a href="https://www.anthropic.com/engineering/building-effective-agents">Anthropic: Building Effective Agents</a> 的 context 相关段落。</p>
+
+  <footer>
+    <p>📚 卡住就问我。</p>
+    <p>下一课预告：《权限与确认》——agent 能读写文件、执行命令，怎么防止它闯祸？确认机制和允许列表。</p>
+    <div class="lesson-nav">
+      <a href="0002-tools-hands-and-eyes.html">← 第 2 课：工具</a>
+      <span>第 3 课 / 持续更新中</span>
+    </div>
+  </footer>
+
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+(function () {
+  var slider = document.getElementById('ctx-slider');
+  var bar = document.getElementById('ctx-bar');
+  var pct = document.getElementById('ctx-pct');
+  var msg = document.getElementById('ctx-msg');
+  function update() {
+    var v = +slider.value;
+    pct.textContent = v + '%';
+    bar.style.width = v + '%';
+    if (v < 55) {
+      bar.style.background = '#1a7f4b';
+      msg.innerHTML = '<b>正常区。</b>历史原样发送，模型看到全部细节。';
+    } else if (v < 75) {
+      bar.style.background = '#b58900';
+      msg.innerHTML = '<b>⚡ Microcompact 介入。</b>旧的工具结果（文件内容、命令输出）被清空，只留最近几条。不调用 LLM，零成本。模型仍记得「读过这个文件」。';
+    } else if (v < 92) {
+      bar.style.background = '#b34700';
+      msg.innerHTML = '<b>🔄 Autocompact 介入。</b>调用一次 LLM，把整段对话总结成摘要，带着摘要继续。准确但花钱、有延迟。';
+    } else {
+      bar.style.background = '#b3261e';
+      msg.innerHTML = '<b>🛑 Emergency 熔断。</b>阻止继续调用 API，请用户开新会话。宁可停下来，也不让超限请求白白失败。';
+    }
+  }
+  slider.addEventListener('input', update);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 5 课：会话与持久化 —— 关掉窗口，对话还在</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<div class="page">
+
+  <div class="course-tag">Agent 原理 · 第 5 课</div>
+  <h1>会话与持久化：关掉窗口，对话还在</h1>
+  <p class="subtitle">前几课的循环和工具都活在内存里。但真实产品要能关掉重开、崩溃恢复、甚至「分叉」出一条平行对话。学完这课，你能说清 session 的存取模型和几个容易踩的坑。</p>
+
+  <h2>内存里的历史 ≠ 能恢复的会话</h2>
+  <p>第 1 课的循环维护一个 <code>messages</code> 数组，进程一退就没了。生产级 agent 需要：写到磁盘、按 ID 找回、崩溃后能恢复、还能从某个历史点「分叉」出新对话。aionrs 的 <code>SessionManager</code> 负责这件事。</p>
+
+  <h2>写入时机：每个关键动作后立刻落盘</h2>
+  <p>回看第 1 课的循环代码，注意一个当时略过的细节：<code>push_history</code> 之后几乎总是跟着 <code>save_session()</code>——</p>
+  <pre><code><span class="cmt">// 用户输入落盘</span>
+push_history(User, input);   <span class="fn">save_session</span>();
+
+<span class="cmt">// 模型的工具调用落盘</span>
+push_history(Assistant, calls); <span class="fn">save_session</span>();
+
+<span class="cmt">// 工具结果落盘</span>
+push_history(User, results); <span class="fn">save_session</span>();</code></pre>
+  <span class="file-ref">📄 真实代码：aion-agent/src/engine.rs 的 run_inner（第 514 行的循环内部）</span>
+  <div class="callout key">
+    <strong>设计原则：崩溃发生在任何一行，丢的都不超过一步。</strong>不是「结束时统一保存」，而是「每步都保存」。写盘很便宜，丢上下文很贵——agent 的会话里每个 token 都是花钱买来的。
+  </div>
+
+  <h2>SessionManager 的四个操作</h2>
+  <table>
+    <tr><th>操作</th><th>干什么</th><th>细节</th></tr>
+    <tr><td><code>create</code></td><td>新会话</td><td>记录 provider、模型、工作目录</td></tr>
+    <tr><td><code>save</code></td><td>落盘</td><td>先拿<strong>会话级文件锁</strong>再写（with_session_lock）</td></tr>
+    <tr><td><code>load</code></td><td>找回</td><td>支持 "latest"；旧格式自动迁移后另存</td></tr>
+    <tr><td><code>fork</code></td><td>分叉</td><td>复制历史成新会话，记录 lineage 但不跟随</td></tr>
+  </table>
+  <span class="file-ref">📄 真实代码：aion-agent/src/session.rs（SessionManager，约 200 行）</span>
+
+  <h2>三个容易踩的坑（都是真实代码里的对策）</h2>
+  <p><strong>① 并发写同一会话。</strong>两个进程同时写一个 session 文件会写出损坏的 JSON。aionrs 的对策是文件锁：<code>save</code> 先抢锁再写。你在 AionCore 也见过同款设计——数据目录的 instance guard（「another aioncore already owns this data directory」）。</p>
+  <p><strong>② 格式演进。</strong>软件升级后 session 文件格式变了，旧文件不能丢。<code>load</code> 里先尝试当前格式，失败再走 legacy 加载，成功后立刻按新格式另存——读取路径里顺手完成迁移。</p>
+  <p><strong>③ 分叉的血统。</strong>fork 出来的会话记录自己从哪来（lineage），但加载时<strong>绝不</strong>顺着 lineage 去找父会话——那只是元信息，不是引用。否则父会话被删，子会话就打不开了。</p>
+
+  <h2>亲手验证（交互 + 真实文件）</h2>
+  <p>你的电脑上就有真实的 session 文件。aionrs 把会话存在用户目录下（AionUi 的对话则存在 AionCore 的 SQLite 里——两种持久化选型，第 7 课你会自己权衡）。</p>
+  <div class="callout">
+    <strong>想一想：</strong>aionrs 用「每会话一个 JSON 文件」，AionCore 用 SQLite 表。各自适合什么场景？文件：简单、可查看、易备份，但不擅长跨会话查询。SQLite：支持搜索、关联、分页（你在第 7 课的动手任务里见过 <code>/api/messages/search</code>），但要管理迁移。没有银弹，只有权衡。
+  </div>
+
+  <h2>小测验（即时反馈）</h2>
+  <div class="quiz" data-quiz='[
+    {"q":"aionrs 为什么在每个 push_history 后立刻 save？",
+     "options":[
+       {"t":"让崩溃发生时最多只丢一步进展","ok":true},
+       {"t":"因为磁盘写入比内存操作更便宜","ok":false},
+       {"t":"为了让界面实时显示历史记录","ok":false}],
+     "why":"对。写盘便宜，丢上下文贵——每个 token 都是花钱买的。",
+     "hint":"崩溃可能发生在任何一行。"},
+    {"q":"两个进程同时写一个 session 文件，aionrs 怎么防？",
+     "options":[
+       {"t":"保存前先抢会话级的文件锁再写","ok":true},
+       {"t":"给文件名加上随机后缀避免冲突","ok":false},
+       {"t":"第二个进程直接拒绝启动并退出","ok":false}],
+     "why":"对。with_session_lock，和 AionCore 数据目录的 instance guard 同款思路。",
+     "hint":"你在 AionCore 启动时见过同款机制。"},
+    {"q":"fork 出的会话找不到父会话时会怎样？",
+     "options":[
+       {"t":"正常打开，lineage 只是元信息不跟随","ok":true},
+       {"t":"报错退出，因为血统链已经断掉了","ok":false},
+       {"t":"自动重建父会话的全部历史内容","ok":false}],
+     "why":"对。lineage 只记录来源，加载时不跟随——父删了子也能用。",
+     "hint":"lineage 是引用还是记录？"}
+  ]'></div>
+  <p class="quiz-done" hidden>🎉 三题全对。持久化模型你已经掌握。</p>
+
+  <h2>动手任务（10 分钟）</h2>
+  <div class="task">
+    <h3>找到并读一个真实 session 文件</h3>
+    <p>1. 打开 <code>aion-agent/src/session.rs</code>，找到 <code>create</code> 里 Session 结构包含哪些字段（provider、model、cwd、消息列表……）。</p>
+    <p>2. 再看 <code>fork</code> 函数：它复制了什么、新生成了什么。</p>
+    <div class="done-criterion">
+      <strong>✓ 完成标志：</strong>能说出 fork 之后，新会话的哪些字段和父会话相同、哪些重新生成（提示：消息的 turn_id 锚点在第 1 课循环里出现过）。
+    </div>
+  </div>
+
+  <h2>延伸阅读</h2>
+  <p>1. 本机 aionrs 的 <code>docs/advanced.md</code> 的 session 相关段落。</p>
+  <p>2. AionCore 的 <code>crates/aionui-db/migrations/001_initial_schema.sql</code>——看 SQLite 选型下对话表长什么样。</p>
+
+  <footer>
+    <p>📚 卡住就问我。</p>
+    <p>下一课预告：《防护与停止条件》——把第 1 课的 guards 全部拆开：死循环检测、失败熔断、周期检测，生产级 agent 的完整自保清单。</p>
+    <div class="lesson-nav">
+      <a href="0004-permissions-and-confirmation.html">← 第 4 课：权限与确认</a>
+      <span>第 5 课 / 持续更新中</span>
+    </div>
+  </footer>
+
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>
