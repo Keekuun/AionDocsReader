@@ -52,6 +52,15 @@ push_history(User, results); <span class="fn">save_session</span>();</code></pre
     <strong>想一想：</strong>aionrs 用「每会话一个 JSON 文件」，AionCore 用 SQLite 表。各自适合什么场景？文件：简单、可查看、易备份，但不擅长跨会话查询。SQLite：支持搜索、关联、分页（你在第 7 课的动手任务里见过 <code>/api/messages/search</code>），但要管理迁移。没有银弹，只有权衡。
   </div>
 
+  <h2>深入一层：崩溃恢复时历史不能「悬空」</h2>
+  <p>一个隐蔽的坑：假设进程在工具执行到一半时被杀掉——历史里最后一条是 Assistant 的 tool_use，<strong>但没有配对的工具结果</strong>。下次恢复会话、把这段历史发给模型 API 时，API 会直接报错拒绝：协议要求每个 tool_use 必须有结果配对。</p>
+  <p>aionrs 的对策在「中止」逻辑里：用户点停止（或崩溃恢复）时，引擎会把最后一个 Assistant 消息里所有<strong>未完成的 tool_use 补写成「已取消」的结果</strong>，再落盘。历史永远是合法的，会话随时能恢复。</p>
+  <span class="file-ref">📄 真实代码：aion-agent/src/engine.rs 第 1531 行 abort_current_turn——先收集 pending 的 tool_use，再逐个补取消结果</span>
+  <div class="callout key">
+    <strong>设计原则：</strong>持久化的历史必须满足「任何时刻拿出来都能直接发给模型 API」。崩溃恢复不是「尽量多保留」，而是「保留到合法为止」。你以后设计会话存储时，把「这段历史能不能原样发给 API」当成验收标准。
+  </div>
+  <p>另一个细节：每条消息都带 <code>turn_id</code> 锚点（第 1 课循环里 <code>push_history</code> 时盖上）。fork 分叉时按 turn 切分历史——所以 fork 不是「复制到第 N 条消息」，而是「复制到第 N 个 turn 边界」，保证切点永远在合法位置。</p>
+
   <h2>小测验（即时反馈）</h2>
   <div class="quiz" data-quiz='[
     {"q":"aionrs 为什么在每个 push_history 后立刻 save？",
@@ -74,7 +83,21 @@ push_history(User, results); <span class="fn">save_session</span>();</code></pre
        {"t":"报错退出，因为血统链已经断掉了","ok":false},
        {"t":"自动重建父会话的全部历史内容","ok":false}],
      "why":"对。lineage 只记录来源，加载时不跟随——父删了子也能用。",
-     "hint":"lineage 是引用还是记录？"}
+     "hint":"lineage 是引用还是记录？"},
+    {"q":"进程在工具执行一半时被杀，恢复会话第一件事做什么？",
+     "options":[
+       {"t":"把悬空的 tool_use 补写成已取消的结果","ok":true},
+       {"t":"把最后一条 Assistant 消息直接删掉","ok":false},
+       {"t":"从上一个用户消息重新执行工具","ok":false}],
+     "why":"对。API 要求每个 tool_use 有配对结果，悬空的历史会被拒绝。",
+     "hint":"想想模型 API 的协议约束。"},
+    {"q":"fork 为什么按 turn 边界切分而不是按消息条数？",
+     "options":[
+       {"t":"保证切点处的历史对模型 API 合法","ok":true},
+       {"t":"turn 编号的存储空间比消息小","ok":false},
+       {"t":"按消息切分会丢失文件的修改","ok":false}],
+     "why":"对。turn 边界一定是「结果配对完整」的位置，消息中间切可能切开 tool_use 和它的结果。",
+     "hint":"和上一题是同一个约束。"}
   ]'></div>
   <p class="quiz-done" hidden>🎉 三题全对。持久化模型你已经掌握。</p>
 

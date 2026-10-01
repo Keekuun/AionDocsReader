@@ -109,6 +109,22 @@ registry.<span class="fn">register</span>(ExecCommand::new(...));
     <strong>设计要点：</strong>对模型来说，MCP 工具和内置工具<strong>长得一模一样</strong>——都是三张名片。这就是好抽象：新增能力不改循环，只往注册表里加工具。你自己造 agent 时，这条「一切能力皆工具」的原则直接照抄。
   </div>
 
+  <h2>深入一层：工具调用的完整生命周期</h2>
+  <p>把第 1 课的事件流和第 2 课的工具拼起来，一次工具调用在系统里的完整旅程是：</p>
+  <pre><code>1. 请求发出前：引擎按当前策略过滤名片（plan 模式只发只读工具）
+2. 模型返回 tool_use → 引擎发 ToolRequest 事件（界面弹卡片）
+3. 权限检查：不在允许列表 → 暂停，等人类确认（第 4 课）
+4. 执行前 → 触发 PreToolUse 钩子（比如自动备份）
+5. execute() 执行 → 发 ToolRunning / ToolResult 事件
+6. 执行后 → 触发 PostToolUse 钩子（比如自动格式化、审计日志）
+7. 结果超长 → 按 max_result_size 截断
+8. 结果以 User 角色写回历史，进入下一 turn</code></pre>
+  <span class="file-ref">📄 钩子系统：aion-agent/src/orchestration.rs + docs/advanced.md 的 hooks 一节；工具事件：aion-protocol/src/events.rs</span>
+  <p>钩子是生产级的隐藏武器：工具执行前后可以挂任意自动化（写文件后自动跑 prettier、执行命令前记审计日志），而且<strong>不改工具本身的代码</strong>。这是事件驱动设计：引擎在生命周期的固定点位发事件，谁关心谁订阅。</p>
+  <div class="callout">
+    <strong>还有一个细节：</strong>模型发起的工具调用可能<strong>格式就是坏的</strong>（JSON 缺括号、参数名拼错）。aionrs 不把它当死刑：解析失败会计入 malformed 计数器，同时把「你的调用格式错了」作为结果喂回模型让它重试——只有连续坏到上限才熔断。对模型容错，是生产级的必修课。
+  </div>
+
   <h2>小测验（即时反馈）</h2>
   <div class="quiz" data-quiz='[
     {"q":"模型决定调用某个工具时，它实际看到的是什么？",
@@ -131,7 +147,21 @@ registry.<span class="fn">register</span>(ExecCommand::new(...));
        {"t":"模型自己通过网络直连远程服务器","ok":false},
        {"t":"把远程工具的代码下载下来再编译","ok":false}],
      "why":"对。McpToolProxy 实现同一个 Tool trait，对模型完全透明。",
-     "hint":"想想「一切能力皆工具」。"}
+     "hint":"想想「一切能力皆工具」。"},
+    {"q":"「写文件后自动跑 prettier」这种需求，生产级 agent 怎么实现？",
+     "options":[
+       {"t":"在工具执行后的钩子点位挂自动化逻辑","ok":true},
+       {"t":"修改 Write 工具的源码加上格式化","ok":false},
+       {"t":"在系统提示里请求模型记得格式化","ok":false}],
+     "why":"对。钩子挂在工具生命周期上，不改工具代码，也不依赖模型自觉。",
+     "hint":"改工具源码会让每个新工具都漏掉这个逻辑。"},
+    {"q":"模型发来的工具调用 JSON 缺了个括号，引擎该怎么做？",
+     "options":[
+       {"t":"把格式错误反馈给模型让它重试，连续失败才熔断","ok":true},
+       {"t":"直接终止整个 run 并向用户报告错误","ok":false},
+       {"t":"引擎自己猜测并补全缺失的括号内容","ok":false}],
+     "why":"对。对模型容错：错误是它的学习信号，熔断是最后的手段。",
+     "hint":"模型会犯错，关键是给不给纠正机会。"}
   ]'></div>
   <p class="quiz-done" hidden>🎉 三题全对。你已经理解工具系统的设计——去做动手任务吧。</p>
 
@@ -167,6 +197,17 @@ registry.<span class="fn">register</span>(ExecCommand::new(...));
   var steps = document.querySelectorAll('#game .sim-step');
   var progress = document.getElementById('game-progress');
   var current = 0;
+
+  // 选项乱序：正确答案不固定位置
+  steps.forEach(function (step) {
+    var container = step.querySelector('p:has(.quiz-opt)');
+    if (!container) return;
+    var btns = Array.prototype.slice.call(container.querySelectorAll('.quiz-opt'));
+    for (var i = btns.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      container.appendChild(btns[j]);
+    }
+  });
   function advance() {
     if (current < steps.length - 1) {
       current += 1;

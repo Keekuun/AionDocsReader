@@ -60,6 +60,28 @@
   <h2>还有一条腿：持久记忆</h2>
   <p>压缩解决「单次对话太长」，但跨会话怎么办？aionrs 的 <code>aion-memory</code> crate 做项目级持久记忆：把值得长期记住的东西（项目约定、用户偏好）存下来，新会话自动索引注入。压缩是「忘得聪明」，记忆是「记住该记的」——方向相反，目标相同：让模型每个 turn 看到的都是高价值内容。</p>
 
+  <h2>深入一层：token 是怎么算出来的</h2>
+  <p>「接近上限」听起来简单，但引擎怎么知道现在用了多少 token？调一次官方 tokenizer 太慢。aionrs 用<strong>启发式估算</strong>：</p>
+  <pre><code><span class="cmt">// 文本：约 4 个字符 ≈ 1 token</span>
+<span class="kw">const</span> CHARS_PER_TOKEN_TEXT = 4;
+
+<span class="cmt">// 图片：按解码后的字节数估算，并钳制在合理区间</span>
+<span class="kw">const</span> BYTES_PER_TOKEN = 750;
+<span class="kw">const</span> MIN_IMAGE_TOKENS = 85;
+<span class="kw">const</span> MAX_IMAGE_TOKENS = 2048;</code></pre>
+  <span class="file-ref">📄 真实代码：aion-agent/src/compact/estimate.rs</span>
+  <p>估算会不准，所以策略是：<strong>平时用估算做触发判断，模型 API 返回的精确 usage 再校准</strong>。估算负责「快」，精确值负责「准」——工程上常见的双轨制。</p>
+
+  <h2>深入二层：压缩提示词的真实模样</h2>
+  <p>Autocompact 要让 LLM 总结对话，这个总结请求本身的提示词是精心设计的。aionrs 用的是 <strong>9 节摘要结构</strong>（用户意图、技术概念、文件和代码、错误记录……），开头还有一段强硬的「前言」：</p>
+  <pre><code>"CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
+ - Do NOT use Read, ExecCommand, Grep, Glob, Edit, Write, or ANY other tool.
+ - Tool calls will be REJECTED and will waste your only turn — you will fail."</code></pre>
+  <span class="file-ref">📄 真实代码：aion-agent/src/compact/prompt.rs 的 PREAMBLE</span>
+  <div class="callout key">
+    <strong>为什么要禁止工具调用？</strong>压缩调用只有<strong>一个 turn</strong> 的预算：模型如果发起工具调用，没有下一 turn 给它拿结果，这次压缩就白花了钱还失败。所以提示词用最强烈的措辞封死工具通道。这再次印证第 2 课：<strong>提示词就是行为的控制器</strong>，连「不许调工具」都是靠提示词 + 执行层拒绝双保险。
+  </div>
+
   <h2>小测验（即时反馈）</h2>
   <div class="quiz" data-quiz='[
     {"q":"Microcompact 清空的是历史里的哪部分？",
@@ -82,7 +104,21 @@
        {"t":"模型对重复内容收取额外的惩罚费","ok":false},
        {"t":"流式输出按历史条数来逐条计费","ok":false}],
      "why":"对。第 N 个 turn 发送 N 份累积历史，总量约是 N²/2。",
-     "hint":"想想第 10 个 turn 发了多少内容。"}
+     "hint":"想想第 10 个 turn 发了多少内容。"},
+    {"q":"引擎怎么知道当前上下文占了多少 token？",
+     "options":[
+       {"t":"用启发式估算触发，API 精确值再校准","ok":true},
+       {"t":"每个 turn 都调官方 tokenizer 精确算","ok":false},
+       {"t":"按历史消息条数乘固定系数估算","ok":false}],
+     "why":"对。估算负责快，精确值负责准——双轨制。",
+     "hint":"tokenizer 太慢，但估错了怎么办？"},
+    {"q":"压缩提示词为什么用最强措辞禁止工具调用？",
+     "options":[
+       {"t":"压缩只有一个 turn 预算，调工具就失败","ok":true},
+       {"t":"压缩时的工具调用会泄露用户隐私","ok":false},
+       {"t":"工具调用会让摘要变得不够客观","ok":false}],
+     "why":"对。发起工具调用就没有下一 turn 拿结果，这次压缩白花钱还失败。",
+     "hint":"压缩请求有几个 turn 的预算？"}
   ]'></div>
   <p class="quiz-done" hidden>🎉 三题全对。上下文工程的核心你已经掌握。</p>
 

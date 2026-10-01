@@ -50,6 +50,23 @@
     </div>
   </div>
 
+  <h2>深入一层：阈值从哪来，停止时发生什么</h2>
+  <p>这些计数器的上限不是写死的魔法数字，而是来自 <code>Config</code>——按部署环境可调。CI 里的只读分析可以给很紧的预算，交互式开发可以放宽。设计护栏时把阈值做成配置，是生产级的基本素养。</p>
+  <p>再看「停止」的真实实现。用户点停止按钮时，引擎不是粗暴截断，而是走 <code>abort_current_turn</code>：</p>
+  <pre><code><span class="cmt">// 1. 找到最后一个 Assistant 消息里还没拿到结果的 tool_use</span>
+<span class="kw">let</span> pending = last_message.content
+    .filter_map(|b| b.as_tool_use());
+
+<span class="cmt">// 2. 逐个补写「已取消」结果——历史必须合法（第 5 课）</span>
+<span class="kw">for</span> call <span class="kw">in</span> pending {
+    push_history(User, ToolResult::cancelled(call.id));
+}
+<span class="cmt">// 3. 发 ToolCancelled 事件给界面，落盘，停</span></code></pre>
+  <span class="file-ref">📄 真实代码：aion-agent/src/engine.rs 第 1531 行</span>
+  <div class="callout key">
+    <strong>把几课串起来了：</strong>停止（第 6 课）要补写取消结果，因为历史合法性（第 5 课）是模型 API 的硬约束；取消事件走事件流（第 1 课）通知界面；取消的工具卡片在界面上显示「已取消」而不是永远转圈。生产级系统里，每个机制都和另外三个咬在一起。
+  </div>
+
   <h2>小测验（即时反馈）</h2>
   <div class="quiz" data-quiz='[
     {"q":"计数器快触顶时，aionrs 第一步做什么？",
@@ -72,7 +89,21 @@
        {"t":"因为重试一次就一定能成功了","ok":false},
        {"t":"因为空回答其实不影响最终用户","ok":false}],
      "why":"对。无预算的重试通道就是另一个失控入口。",
-     "hint":"重试本身也是循环。"}
+     "hint":"重试本身也是循环。"},
+    {"q":"用户点「停止」时，引擎为什么不能直接截断历史？",
+     "options":[
+       {"t":"悬空的 tool_use 会让下次请求被 API 拒绝","ok":true},
+       {"t":"截断会导致界面上的工具卡片消失","ok":false},
+       {"t":"直接截断会丢失已经产生的计费","ok":false}],
+     "why":"对。abort 要先把未完成的 tool_use 补写成已取消，历史合法才能恢复。",
+     "hint":"回想第 5 课的崩溃恢复。"},
+    {"q":"护栏阈值（比如 max_turns）应该怎么设置？",
+     "options":[
+       {"t":"做成配置项，按部署环境分别调优","ok":true},
+       {"t":"写死一个魔法数字，所有环境通用","ok":false},
+       {"t":"让模型自己决定什么时候该停下","ok":false}],
+     "why":"对。CI 里的只读分析要紧预算，交互式开发可放宽——没有放之四海皆准的值。",
+     "hint":"失控的代价随环境变化。"}
   ]'></div>
   <p class="quiz-done" hidden>🎉 三题全对。防护体系你已经完整掌握。</p>
 

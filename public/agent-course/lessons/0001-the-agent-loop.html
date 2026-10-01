@@ -105,6 +105,24 @@
   </table>
   <p>没有护栏的循环，线上跑一次死循环就是一笔真金白银的账单。这就是为什么第 6 课会专门讲防护与停止条件。</p>
 
+  <h2>深入一层：循环里面还有一条事件流</h2>
+  <p>到目前为止我们把一个 turn 看成「发请求、等响应」的黑盒。实际上 turn 内部是<strong>流式</strong>的：模型每生成一小段，引擎就发一个事件给客户端。你在 AionUi 里看到的打字机效果，就是这条事件流驱动的。</p>
+  <p>aionrs 的引擎和客户端之间有一份完整的事件协议（<code>ProtocolEvent</code> 枚举），一次 run 的真实事件序列长这样：</p>
+  <pre><code>StreamStart                        <span class="cmt">// run 开始</span>
+Thinking { "我先看看文件..." }      <span class="cmt">// 模型的思考（可折叠展示）</span>
+ToolRequest { tool: "Read" }       <span class="cmt">// 模型要调工具了（界面显示卡片）</span>
+ToolRunning { tool_name: "Read" }  <span class="cmt">// 引擎开始执行</span>
+ToolResult  { status: "ok", output }<span class="cmt">// 执行完毕</span>
+TextDelta { "这个 workspace " }     <span class="cmt">// 最终答案的流式片段</span>
+TextDelta { "有 12 个 crate..." }
+StreamEnd { usage }                <span class="cmt">// run 结束，附带 token 用量</span></code></pre>
+  <span class="file-ref">📄 真实代码：crates/aion-protocol/src/events.rs 的 ProtocolEvent 枚举（共 14 种事件，含 ToolCancelled / Error / McpReady）</span>
+  <p>注意 <code>Thinking</code> 和 <code>TextDelta</code> 是<strong>分开</strong>的两种事件：思考过程和正式回答走不同通道，界面才能把思考折叠起来。另外每个 turn 结束还有一个 <code>StopReason</code> 四选一：<code>EndTurn</code>（答完了）/ <code>ToolUse</code>（要调工具）/ <code>MaxTokens</code>（输出撞上限）/ <code>MaxTurns</code>（护栏熔断）——循环就是靠它决定下一步。</p>
+  <span class="file-ref">📄 真实代码：crates/aion-types/src/message.rs 第 208 行</span>
+  <div class="callout">
+    <strong>为什么值得懂：</strong>你以后给自己的 agent 加界面时，第一件事就是设计这条事件流。流式不是锦上添花——没有它，用户盯着死等的空白 30 秒，会以为程序死了。
+  </div>
+
   <h2>小测验（即时反馈）</h2>
   <div class="quiz" data-quiz='[
     {"q":"一个 turn 里模型返回了 tool_calls，引擎下一步做什么？",
@@ -127,7 +145,21 @@
        {"t":"防止模型陷入工具循环，把调用预算烧光","ok":true},
        {"t":"防止工具执行得太慢，拖慢前端界面响应","ok":false}],
      "why":"对。没有预算上限的循环，一次失控就是一笔真实账单。",
-     "hint":"想想 while 循环最怕什么。"}
+     "hint":"想想 while 循环最怕什么。"},
+    {"q":"界面上模型「打字机」式的逐字输出，底层靠什么实现？",
+     "options":[
+       {"t":"引擎每收到一小段模型输出就发一个流式事件","ok":true},
+       {"t":"界面定时轮询引擎询问最新的完整回答","ok":false},
+       {"t":"模型自己控制输出速度来模拟人类打字","ok":false}],
+     "why":"对。TextDelta 事件序列驱动打字机效果；没有流式，用户只能干等。",
+     "hint":"回想 ProtocolEvent 里哪种事件重复出现。"},
+    {"q":"循环怎么知道模型这一轮是想调工具还是答完了？",
+     "options":[
+       {"t":"看响应结尾的 StopReason 是 ToolUse 还是 EndTurn","ok":true},
+       {"t":"数一下响应文本里有没有出现工具的名字","ok":false},
+       {"t":"看响应的 token 数量有没有超过阈值","ok":false}],
+     "why":"对。StopReason 是循环的转向信号灯，四选一。",
+     "hint":"不是靠猜文本内容。"}
   ]'></div>
   <p class="quiz-done" hidden>🎉 三题全对。你已经掌握了 agent 的最小内核——可以进入动手任务了。</p>
 

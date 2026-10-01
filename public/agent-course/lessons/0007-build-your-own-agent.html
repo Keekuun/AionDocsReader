@@ -100,6 +100,26 @@ export MODEL=deepseek-chat</code></pre>
     </div>
   </div>
 
+  <h2>深入一层：给玩具加上流式和确认</h2>
+  <p>80 行版本是同步的：等模型完整生成才输出。加上流式（第 1 课的事件流思想）和权限确认（第 4 课），改动都不大：</p>
+  <pre><code><span class="cmt">// ① 流式：请求加 stream: true，逐行解析 SSE</span>
+body: JSON.stringify({ ..., stream: <span class="kw">true</span> })
+<span class="cmt">// 响应不再是整段 JSON，而是 data: {...}\n\n 的事件流</span>
+<span class="cmt">// 每个 data 块里的 delta.content 就是一个 TextDelta</span>
+
+<span class="cmt">// ② 确认：执行危险工具前问一句（readline）</span>
+<span class="kw">if</span> (DANGEROUS.has(tool.name)) {
+  <span class="kw">const</span> ok = <span class="kw">await</span> <span class="fn">ask</span>(`允许 ${tool.name}(${args}) 吗？y/n `);
+  <span class="kw">if</span> (!ok) {
+    messages.<span class="fn">push</span>({ role: 'tool', tool_call_id: call.id,
+                    content: '用户拒绝了这次调用' });  <span class="cmt">// 拒绝也写回历史！</span>
+    <span class="kw">continue</span>;
+  }
+}</code></pre>
+  <div class="callout key">
+    <strong>注意第 ② 段的细节：</strong>被拒绝的调用也要以 <code>role: 'tool'</code> 写回「用户拒绝了」——这就是第 4、5 课的联动：API 要求每个 tool_call 有配对结果（历史合法性），模型需要拒绝信号来换方案（人在环内）。你亲手写的代码现在已经带着生产级的基因了。
+  </div>
+
   <h2>从玩具到生产：六课对照清单</h2>
   <p>你的 80 行 agent 和 aionrs 的差距，就是前六课的内容。逐项对照，这就是你以后迭代的路线图：</p>
   <table>
@@ -137,7 +157,21 @@ export MODEL=deepseek-chat</code></pre>
        {"t":"上下文压缩，因为对话肯定会变长","ok":false},
        {"t":"会话分叉，因为用户想要平行对话","ok":false}],
      "why":"对。能写文件的 agent 没有确认机制，第一个事故只是时间问题。",
-     "hint":"哪个机制的缺失会最先造成真实损失？"}
+     "hint":"哪个机制的缺失会最先造成真实损失？"},
+    {"q":"给玩具加流式输出，本质改动是什么？",
+     "options":[
+       {"t":"请求加 stream 参数，逐块解析事件流","ok":true},
+       {"t":"让模型生成得更慢，模拟打字效果","ok":false},
+       {"t":"把完整回答按字符切开逐字显示","ok":false}],
+     "why":"对。流式是传输层的事：模型边生成边发，引擎边收边转发。",
+     "hint":"回想第 1 课的 TextDelta。"},
+    {"q":"用户拒绝工具调用后，消息历史里应该写什么？",
+     "options":[
+       {"t":"配对的 tool 结果，内容是用户拒绝了","ok":true},
+       {"t":"什么都不写，当作这次调用没发生","ok":false},
+       {"t":"写一条 system 消息记录拒绝原因","ok":false}],
+     "why":"对。每个 tool_call 必须有配对结果（API 硬约束），拒绝信号还能让模型换方案。",
+     "hint":"两个约束：协议合法性 + 模型需要反馈。"}
   ]'></div>
   <p class="quiz-done" hidden>🎉 毕业考通过！你已经具备造生产级 agent 的完整地图。</p>
 

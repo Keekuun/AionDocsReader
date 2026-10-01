@@ -3,6 +3,15 @@
 (function () {
   'use strict';
 
+  function shuffle(arr) {
+    // Fisher-Yates：选项乱序，避免正确答案固定在同一个位置
+    for (var i = arr.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    }
+    return arr;
+  }
+
   function renderQuiz(container) {
     var questions = JSON.parse(container.getAttribute('data-quiz'));
     var answered = 0;
@@ -18,7 +27,7 @@
       var fb = document.createElement('div');
       fb.className = 'quiz-fb';
 
-      q.options.forEach(function (opt) {
+      shuffle(q.options.slice()).forEach(function (opt) {
         var btn = document.createElement('button');
         btn.className = 'quiz-opt';
         btn.textContent = opt.t;

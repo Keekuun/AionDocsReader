@@ -59,6 +59,20 @@
     </div>
   </div>
 
+  <h2>深入一层：Plan 模式——把「不许写」做成双保险</h2>
+  <p>确认机制是「问了再批」，plan 模式更彻底：进入后 agent 进入<strong>只读探索</strong>状态，先出实施方案，人类批准计划后才动手。它是怎么保证只读的？不是求模型自觉，而是两层：</p>
+  <pre><code><span class="cmt">// 第一层：工具集过滤——写类工具的名片根本不进请求</span>
+registry.to_tool_defs_filtered(|tool| 只允许 Read / Grep / Glob);
+
+<span class="cmt">// 第二层：系统提示词明文禁令</span>
+"Plan mode is active. You MUST NOT make any edits, run any
+ non-read-only tools, or otherwise make any changes to the system."</code></pre>
+  <span class="file-ref">📄 真实代码：aion-agent/src/plan/ 目录（prompt.rs 第 16 行是禁令原文）；过滤在第 2 课见过的 to_tool_defs_filtered</span>
+  <div class="callout key">
+    <strong>设计原则：能力层 + 意图层双保险。</strong>只发只读工具的名片，模型<strong>没有能力</strong>写；提示词再声明意图，模型<strong>知道不该</strong>写。单靠任何一层都不可靠：只过滤名片，模型可能用 Read 的奇怪参数绕；只写提示词，模型可能幻觉出工具调用。你以后设计权限时记住这个句式：<strong>能力上做不到 + 意图上知道不该</strong>。
+  </div>
+  <p>另外一个方向：skill（技能包）可以声明自己需要哪些工具的自动批准，加载时通过 <code>add_to_allow_list</code> 动态加进允许列表——权限不是全局开关，而是<strong>按场景精确授予</strong>。</p>
+
   <h2>小测验（即时反馈）</h2>
   <div class="quiz" data-quiz='[
     {"q":"用户选 [a]lways 之后，这个工具下次还会问吗？",
@@ -81,7 +95,21 @@
        {"t":"全自动模式下模型输出质量下降","ok":false},
        {"t":"确认流程能显著提升模型的智力","ok":false}],
      "why":"对。自主性和控制权是矛盾，危险动作默认要人批。",
-     "hint":"想想 rm -rf。"}
+     "hint":"想想 rm -rf。"},
+    {"q":"Plan 模式的「只读」是怎么保证的？",
+     "options":[
+       {"t":"工具集过滤掉写类工具 + 提示词禁令，双保险","ok":true},
+       {"t":"提示词里请求模型不要修改任何文件","ok":false},
+       {"t":"把文件系统挂载成只读后再运行","ok":false}],
+     "why":"对。能力上做不到 + 意图上知道不该，单层都不可靠。",
+     "hint":"只发只读名片，模型还有写的能力吗？"},
+    {"q":"被拒绝的工具调用为什么要写回历史？",
+     "options":[
+       {"t":"让模型知道此路不通，据此换方案","ok":true},
+       {"t":"留作审计日志，方便事后追责用","ok":false},
+       {"t":"协议要求每个调用必须有结果配对","ok":false}],
+     "why":"对。拒绝是反馈信号——模型收到「用户不允许」才会调整策略。审计是副产品，不是主因。",
+     "hint":"模型看不到你点按钮的动作。"}
   ]'></div>
   <p class="quiz-done" hidden>🎉 三题全对。权限模型你已经清楚了。</p>
 
