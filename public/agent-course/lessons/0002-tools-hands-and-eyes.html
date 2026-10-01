@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第 2 课：工具 —— Agent 的手和眼</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<div class="page">
+
+  <div class="course-tag">Agent 原理 · 第 2 课</div>
+  <h1>工具：Agent 的手和眼</h1>
+  <p class="subtitle">上一课的循环里，模型说「我要读文件」就能读到文件——靠的就是工具。学完这课，你能说清工具是怎么被模型发现和调用的，并能自己设计一个工具。</p>
+
+  <h2>先纠正一个直觉</h2>
+  <div class="callout key">
+    <strong>模型从来不会「执行」任何东西。</strong>它只是输出一段结构化文本（<code>tool_use</code>）：「我想调用 Read，参数是 {file_path: "..."}」。真正读文件的是引擎。工具调用 = 模型的<strong>请求</strong>，不是模型的<strong>动作</strong>。
+  </div>
+
+  <h2>工具的三张名片</h2>
+  <p>模型做选择时，看到的只有每个工具的三样信息。aionrs 里每个工具都实现同一个 <code>Tool</code> trait：</p>
+  <pre><code><span class="kw">pub trait</span> <span class="fn">Tool</span> {
+    <span class="kw">fn</span> <span class="fn">name</span>()        → <span class="cmt">"Read"            ← 名片①：名字</span>
+    <span class="kw">fn</span> <span class="fn">description</span>() → <span class="cmt">"Reads a file..." ← 名片②：说明书</span>
+    <span class="kw">fn</span> <span class="fn">input_schema</span>() → <span class="cmt">JSON Schema      ← 名片③：参数格式</span>
+
+    <span class="kw">async fn</span> <span class="fn">execute</span>(input) → ToolResult  <span class="cmt">← 模型看不到，引擎用</span>
+}</code></pre>
+  <span class="file-ref">📄 真实代码：~/.cargo/git/checkouts/aionrs-c860c928cccf810e/8e61a90/crates/aion-tools/src/tool.rs 第 44 行</span>
+  <p>每个 turn 开始时，引擎把注册表里所有工具的三张名片打包进请求（<code>engine.rs</code> 第 688 行的 <code>to_tool_defs_filtered</code>）。模型的全部依据就是这些名片。</p>
+
+  <h2>说明书是写给模型的 prompt</h2>
+  <p>看 Read 工具 description 的真实原文（节选）：</p>
+  <pre><code>"Reads a file from the local filesystem. Returns content with line numbers.
+ Usage:
+ - The file_path parameter must be an absolute path, not a relative path.
+ - By default, it reads the entire file. Use offset and limit for partial reads..."</code></pre>
+  <span class="file-ref">📄 真实代码：aion-tools/src/read.rs 第 39 行</span>
+  <div class="callout">
+    <strong>这是本课最重要的洞察：</strong>description 不是写给人类看的注释，而是<strong>随请求发给模型的操作说明书</strong>。「必须用绝对路径」这句话直接塑造模型的行为。写工具 = 写代码 + 写给模型看的 prompt，两者同样重要。你以后设计自己的 agent 工具时，一半功夫在 description 上。
+  </div>
+
+  <h2>工具注册表：引擎的花名册</h2>
+  <p><code>ToolRegistry</code> 就是一个列表：启动时把工具一个个 <code>register</code> 进去；模型点名时按名字 <code>get</code> 出来执行：</p>
+  <pre><code>registry.<span class="fn">register</span>(ReadTool::new(...));
+registry.<span class="fn">register</span>(WriteTool::new(...));
+registry.<span class="fn">register</span>(ExecCommand::new(...));
+<span class="cmt">// ... Grep / Glob / ViewImage / Spawn / ToolSearch</span>
+
+<span class="cmt">// 每个 turn：名片打包进模型请求</span>
+<span class="kw">let</span> defs = registry.<span class="fn">to_tool_defs</span>();
+<span class="cmt">// 模型点名后：按名字找到并执行</span>
+<span class="kw">let</span> tool = registry.<span class="fn">get</span>(<span class="str">"Read"</span>)?;</code></pre>
+  <span class="file-ref">📄 真实代码：aion-tools/src/registry.rs（整个文件只有 60 行，值得通读）</span>
+
+  <h2>你来当一次模型（交互）</h2>
+  <p>场景：用户说「<strong>看下 Cargo.toml 前 50 行</strong>」。你现在就是模型，手边有三张工具名片。做出你的选择：</p>
+
+  <div class="sim" id="game">
+    <div class="sim-stage">
+      <div class="sim-step active">
+        <span class="sim-actor model">第 1 步 · 选工具</span>
+        <p>三个工具的 description 大意如下，选哪个？</p>
+        <p>
+          <button class="quiz-opt" data-ok="1" data-why="对。有专用工具就不用 shell——这是 aionrs 系统提示里的明文规则，也是生产 agent 的通用实践。"><b>Read</b>：读文件，带行号，支持 offset/limit 部分读取</button>
+          <button class="quiz-opt" data-ok="0" data-hint="用户只要「看」，不要改。"><b>Write</b>：把内容写入文件，会覆盖已有内容</button>
+          <button class="quiz-opt" data-ok="0" data-hint="head -50 也能做到，但系统提示明确禁止有专用工具时用 ExecCommand。"><b>ExecCommand</b>：执行任意 shell 命令，比如 head -50</button>
+        </p>
+        <div class="quiz-fb" id="g1fb"></div>
+      </div>
+      <div class="sim-step">
+        <span class="sim-actor model">第 2 步 · 填参数</span>
+        <p>你选了 Read。回看它的说明书：「file_path <strong>must be an absolute path</strong>」。填哪个？</p>
+        <p>
+          <button class="quiz-opt" data-ok="0" data-hint="相对路径。说明书第一条就禁止了它。"><code>Cargo.toml</code></button>
+          <button class="quiz-opt" data-ok="1" data-why="对。绝对路径 + limit=50，完全按说明书来。模型遵守 description 的程度，直接决定 agent 的可靠性。"><code>/home/user/proj/Cargo.toml</code>，limit=50</button>
+          <button class="quiz-opt" data-ok="0" data-hint="还是相对路径，引擎不知道该去哪找。"><code>../proj/Cargo.toml</code></button>
+        </p>
+        <div class="quiz-fb" id="g2fb"></div>
+      </div>
+      <div class="sim-step">
+        <span class="sim-actor engine">引擎执行</span>
+        <p>引擎从注册表取出 Read，校验参数，读文件，结果以 User 角色写回历史，进入下一 turn：</p>
+        <pre><code>tool_result: "1→[workspace]\n2→resolver = \"3\"\n3→members = [..."
+<span class="cmt">// history += [Assistant(tool_use), User(tool_result)]</span>
+<span class="cmt">// 下一 turn：模型基于文件内容给出最终解释</span></code></pre>
+        <p>🎉 你刚刚以模型的视角完成了一次完整的工具调用。</p>
+      </div>
+    </div>
+    <div class="sim-controls">
+      <span class="sim-progress" id="game-progress">第 1 / 3 步</span>
+    </div>
+  </div>
+
+  <h2>生产级的工具细节（aionrs 真实做法）</h2>
+  <table>
+    <tr><th>机制</th><th>解决什么</th><th>在哪</th></tr>
+    <tr><td><code>is_concurrency_safe</code></td><td>Read 可并行，Write 不行——同 round 多工具时决定能否并发</td><td>tool.rs</td></tr>
+    <tr><td><code>max_result_size</code> = 50000</td><td>工具返回超长内容会爆上下文，先截断</td><td>tool.rs</td></tr>
+    <tr><td>文件状态缓存</td><td>同一文件没改过再读，只回一句「没变化，看之前的」，省 token</td><td>read.rs 第 14 行</td></tr>
+    <tr><td><code>is_deferred</code> + ToolSearch</td><td>工具太多时只发名字存根，模型用 ToolSearch 按需加载完整 schema</td><td>tool_search.rs</td></tr>
+  </table>
+
+  <h2>MCP：外部工具怎么进来</h2>
+  <p>MCP 服务器（比如「查数据库」「操作 Figma」）的工具不在这个仓库里。aionrs 的做法是<strong>包一层代理</strong>：<code>McpToolProxy</code> 实现同一个 <code>Tool</code> trait，<code>execute</code> 里转发给远程服务器。命名冲突时加前缀 <code>mcp__{服务器}__{工具}</code>。</p>
+  <span class="file-ref">📄 真实代码：aion-mcp/src/tool_proxy.rs</span>
+  <div class="callout key">
+    <strong>设计要点：</strong>对模型来说，MCP 工具和内置工具<strong>长得一模一样</strong>——都是三张名片。这就是好抽象：新增能力不改循环，只往注册表里加工具。你自己造 agent 时，这条「一切能力皆工具」的原则直接照抄。
+  </div>
+
+  <h2>小测验（即时反馈）</h2>
+  <div class="quiz" data-quiz='[
+    {"q":"模型决定调用某个工具时，它实际看到的是什么？",
+     "options":[
+       {"t":"工具的名称、说明书和参数 Schema","ok":true},
+       {"t":"工具的 Rust 源码和实现的细节","ok":false},
+       {"t":"工具上一次执行返回的结果内容","ok":false}],
+     "why":"对。模型只拿到三张名片，执行完全是引擎的事。",
+     "hint":"回想 to_tool_defs 打包了什么。"},
+    {"q":"Read 说明书里「必须用绝对路径」这句话是写给谁的？",
+     "options":[
+       {"t":"写给模型看的，它就是 prompt 一部分","ok":true},
+       {"t":"写给人类开发者的代码注释文档","ok":false},
+       {"t":"写给引擎做参数校验用的规则","ok":false}],
+     "why":"对。description 随请求发给模型，直接塑造它的行为。",
+     "hint":"谁在每个 turn 读到这段文字？"},
+    {"q":"MCP 远程工具如何进入 agent 的工具体系？",
+     "options":[
+       {"t":"引擎给每个远程工具包一层本地代理","ok":true},
+       {"t":"模型自己通过网络直连远程服务器","ok":false},
+       {"t":"把远程工具的代码下载下来再编译","ok":false}],
+     "why":"对。McpToolProxy 实现同一个 Tool trait，对模型完全透明。",
+     "hint":"想想「一切能力皆工具」。"}
+  ]'></div>
+  <p class="quiz-done" hidden>🎉 三题全对。你已经理解工具系统的设计——去做动手任务吧。</p>
+
+  <h2>动手任务（15 分钟）</h2>
+  <div class="task">
+    <h3>通读一个真实工具的全部源码</h3>
+    <p>1. 打开 <code>aion-tools/src/read.rs</code>（约 180 行，路径见上面 file-ref）。</p>
+    <p>2. 找到四个东西：<code>description</code> 全文、<code>input_schema</code> 的 JSON、<code>execute</code> 里参数缺失时的返回、文件缓存的去重逻辑。</p>
+    <p>3. 顺手打开同目录的 <code>write.rs</code>，对比它的 <code>is_concurrency_safe</code> 返回了什么。</p>
+    <div class="done-criterion">
+      <strong>✓ 完成标志：</strong>能回答两个问题——① 模型没传 file_path 时工具返回什么（一个 is_error=true 的 ToolResult，错误信息也是写给模型看的，它会据此自我纠正）；② Write 的 is_concurrency_safe 为什么是 false。
+    </div>
+  </div>
+
+  <h2>延伸阅读</h2>
+  <p>1. 本机 aionrs 的 <code>docs/tools.md</code>——八个内置工具的官方说明。</p>
+  <p>2. <a href="https://modelcontextprotocol.io/">MCP 官方规范</a>——看概念部分即可，实现细节第 5 课讲。</p>
+
+  <footer>
+    <p>📚 卡住就问我——直接贴代码问「这段什么意思」就行。</p>
+    <p>下一课预告：《上下文工程》——对话越来越长怎么办？aionrs 的三级压缩（microcompact / autocompact / emergency）和持久记忆。</p>
+    <div class="lesson-nav">
+      <a href="0001-the-agent-loop.html">← 第 1 课：Agent 循环</a>
+      <span>第 2 课 / 持续更新中</span>
+    </div>
+  </footer>
+
+</div>
+
+<script src="../assets/quiz.js"></script>
+<script>
+(function () {
+  var steps = document.querySelectorAll('#game .sim-step');
+  var progress = document.getElementById('game-progress');
+  var current = 0;
+  function advance() {
+    if (current < steps.length - 1) {
+      current += 1;
+      steps.forEach(function (s, k) { s.classList.toggle('active', k === current); });
+      progress.textContent = '第 ' + (current + 1) + ' / ' + steps.length + ' 步';
+    }
+  }
+  steps.forEach(function (step, si) {
+    step.querySelectorAll('.quiz-opt').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (step.dataset.done) return;
+        var fb = step.querySelector('.quiz-fb');
+        if (btn.dataset.ok === '1') {
+          step.dataset.done = '1';
+          btn.classList.add('correct');
+          if (fb) { fb.textContent = '✓ ' + btn.dataset.why; fb.className = 'quiz-fb ok'; }
+          step.querySelectorAll('.quiz-opt').forEach(function (b) { b.disabled = true; });
+          setTimeout(advance, 1400);
+        } else {
+          btn.classList.add('wrong');
+          if (fb) { fb.textContent = '✗ 再想想。' + (btn.dataset.hint || ''); fb.className = 'quiz-fb no'; }
+          setTimeout(function () { btn.classList.remove('wrong'); }, 900);
+        }
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>
